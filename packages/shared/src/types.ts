@@ -83,6 +83,7 @@ export interface TransactionRecord {
   value: string;
   tokenSymbol?: string;
   tokenAddress?: string;
+  tokenDecimals?: number;       // for ERC20/BEP20 tokens; undefined = native
   blockNumber: number;
   blockTimestamp: number;
   status: 'pending' | 'confirmed' | 'failed';

@@ -69,6 +69,15 @@ export interface ChainAdapter {
   /** Get transaction status by hash */
   getTransactionStatus(txHash: string): Promise<TransactionRecord['status']>;
 
+  /**
+   * Build an external block-explorer URL for a tx hash.
+   * Returns undefined if no explorer URL is configured for this chain.
+   *
+   * Default implementation returns `${config.explorer}/tx/${txHash}`.
+   * Chains with custom explorer URL layouts can override (e.g. Solana).
+   */
+  getExplorerTxUrl?(txHash: string): string | undefined;
+
   // ─── Fees ──────────────────────────────────────────────────────────
 
   /** Estimate fees for a transaction */

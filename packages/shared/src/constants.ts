@@ -26,8 +26,49 @@ export const DEFAULT_ACCOUNT_INDEX = 0;
 /** App display name */
 export const APP_NAME = 'OpenWallet';
 
-/** Default language */
-export const DEFAULT_LANGUAGE = 'en' as const;
+/** Supported UI languages */
+export const LANGUAGES = [
+  'en',
+  'zh',
+  'ja',
+  'fr',
+  'ko',
+  'ar',
+] as const;
+export type AppLanguage = (typeof LANGUAGES)[number];
+
+/** Default language (used only when device language can't be detected) */
+export const DEFAULT_LANGUAGE: AppLanguage = 'en';
+
+/**
+ * Detect the user's preferred language from the device/browser locale,
+ * mapping it to our nearest supported language.
+ *
+ * Handles full locales with region tags, e.g.:
+ *   zh-CN / zh-TW / zh-HK → zh
+ *   ja-JP → ja, fr-FR → fr, ko-KR → ko, ar-SA → ar, en-US → en
+ * Falls back to DEFAULT_LANGUAGE when nothing matches.
+ */
+export function detectSystemLanguage(
+  locales: readonly string[] = typeof navigator !== 'undefined'
+    ? navigator.languages ?? [navigator.language]
+    : [],
+): AppLanguage {
+  for (const locale of locales) {
+    const lang = (locale ?? '').toLowerCase();
+    if (!lang) continue;
+    // Exact match (e.g. "ja")
+    if ((LANGUAGES as readonly string[]).includes(lang)) {
+      return lang as AppLanguage;
+    }
+    // Match by base language code (e.g. "zh-CN" → "zh")
+    const base = lang.split('-')[0];
+    if ((LANGUAGES as readonly string[]).includes(base)) {
+      return base as AppLanguage;
+    }
+  }
+  return DEFAULT_LANGUAGE;
+}
 
 /** Default theme */
 export const DEFAULT_THEME = 'dark' as const;

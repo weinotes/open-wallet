@@ -145,7 +145,7 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
       'https://solana-rpc.publicnode.com',
     ],
     explorer: 'https://explorer.solana.com',
-    bip44Path: "m/44'/501'/0'/0",
+    bip44Path: "m/44'/501'/0'",
     icon: 'solana',
   },
 ];

@@ -26,7 +26,8 @@ import { generateId, wipeBytes } from '@open-wallet/shared';
 
 export interface SessionState {
   unlocked: boolean;
-  mnemonic: string | null;
+  /** Mnemonic stored as UTF-8 bytes so we can wipe it from memory on lock */
+  mnemonicBytes: Uint8Array | null;
   accounts: Account[];
   unlockedAt: number | null;          // unix ms
   lastActivityAt: number | null;      // for auto-lock
@@ -36,7 +37,7 @@ export interface SessionState {
 
 let state: SessionState = {
   unlocked: false,
-  mnemonic: null,
+  mnemonicBytes: null,
   accounts: [],
   unlockedAt: null,
   lastActivityAt: null,
@@ -55,6 +56,16 @@ export function isUnlocked(): boolean {
 /** Touch the last-activity timestamp (call before each signing / balance query) */
 export function touchActivity(): void {
   state.lastActivityAt = Date.now();
+}
+
+/** Decode UTF-8 bytes back to mnemonic string */
+function mnemonicFromBytes(bytes: Uint8Array): string {
+  return new TextDecoder().decode(bytes);
+}
+
+/** Encode mnemonic string to UTF-8 bytes */
+function mnemonicToBytes(mnemonic: string): Uint8Array {
+  return new TextEncoder().encode(mnemonic);
 }
 
 // ─── Account derivation ───────────────────────────────────────────────
@@ -78,7 +89,12 @@ function deriveAllAccounts(
     }
 
     const accountIndex = 0; // first account per chain
-    const derivationPath = `${config.bip44Path}/${accountIndex}`;
+    // ed25519 (Solana/SLIP-0010) requires ALL-hardened derivation,
+    // so accountIndex must also be hardened (e.g. m/44'/501'/0'/0')
+    const isEd25519 = config.type === 'solana';
+    const derivationPath = isEd25519
+      ? `${config.bip44Path}/${accountIndex}'`
+      : `${config.bip44Path}/${accountIndex}`;
 
     let privateKey: Uint8Array;
     let publicKey: Uint8Array;
@@ -118,6 +134,9 @@ function deriveAllAccounts(
 /**
  * Unlock the wallet: decrypt vault → derive accounts → hold in memory.
  * Throws on wrong password or corrupted vault.
+ *
+ * Stores mnemonic as UTF-8 bytes (not a JS string) so we can wipe it from
+ * memory on lock().
  */
 export async function unlock(
   vault: VaultData,
@@ -127,9 +146,11 @@ export async function unlock(
   const mnemonic = await decryptVault(vault, password);
   const accounts = deriveAllAccounts(mnemonic, chainConfigs);
 
+  const bytes = mnemonicToBytes(mnemonic);
+
   state = {
     unlocked: true,
-    mnemonic,
+    mnemonicBytes: bytes,
     accounts,
     unlockedAt: Date.now(),
     lastActivityAt: Date.now(),
@@ -139,13 +160,16 @@ export async function unlock(
 }
 
 /**
- * Lock the wallet — erase all sensitive data from memory.
- * Safe to call multiple times (idempotent).
+ * Lock the wallet — erase ALL sensitive data from memory.
+ *
+ * Wipes the mnemonic byte buffer before nulling it out, so the raw
+ * passphrase bytes are not left in RAM waiting for GC.
  */
 export function lock(): void {
-  // Scrub the mnemonic string reference — V8 GC handles the rest
-  // but we at least null it out so nothing can read it
-  state.mnemonic = null;
+  if (state.mnemonicBytes) {
+    wipeBytes(state.mnemonicBytes);
+    state.mnemonicBytes = null;
+  }
   state.unlocked = false;
   state.accounts = [];
   state.unlockedAt = null;
@@ -161,10 +185,11 @@ export function lock(): void {
  * Throws if session is locked or account is not found.
  */
 export function getPrivateKey(account: Account): Uint8Array {
-  if (!state.unlocked || !state.mnemonic) {
+  if (!state.unlocked || !state.mnemonicBytes) {
     throw new Error('Wallet is locked');
   }
 
+  const mnemonic = mnemonicFromBytes(state.mnemonicBytes);
   const config = chainRegistry.get(account.chainId)?.config;
   if (!config) {
     throw new Error(`No chain config for ${account.chainId}`);
@@ -173,9 +198,9 @@ export function getPrivateKey(account: Account): Uint8Array {
   touchActivity();
 
   if (config.type === 'evm') {
-    return deriveEvmPrivateKey(state.mnemonic, account.derivationPath);
+    return deriveEvmPrivateKey(mnemonic, account.derivationPath);
   } else if (config.type === 'solana') {
-    return deriveSolanaPrivateKey(state.mnemonic, account.derivationPath);
+    return deriveSolanaPrivateKey(mnemonic, account.derivationPath);
   }
 
   throw new Error(`Unsupported chain type: ${config.type}`);

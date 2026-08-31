@@ -5,7 +5,7 @@
  *   - BIP-39 mnemonic (24 words, 256-bit entropy)
  *   - BIP-32 / SLIP-0010 HD key derivation
  *   - secp256k1 (EVM) via @scure/bip32 HDKey
- *   - ed25519 (Solana) via simplified seed derivation
+ *   - ed25519 (Solana) via SLIP-0010 HMAC-SHA512 (handwritten here)
  *   - SLIP-0044 purpose paths
  */
 
@@ -13,6 +13,8 @@ import { generateMnemonic, validateMnemonic, mnemonicToSeedSync } from 'bip39';
 import { HDKey } from '@scure/bip32';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { ed25519 } from '@noble/curves/ed25519';
+import { hmac } from '@noble/hashes/hmac';
+import { sha512 } from '@noble/hashes/sha512';
 import { toHex, fromHex, wipeBytes } from '@open-wallet/shared';
 
 /** Generate a new 24-word mnemonic using CSPRNG */
@@ -53,66 +55,87 @@ export function deriveEvmPrivateKey(
   }
 }
 
+// ─── SLIP-0010 ed25519 key derivation ─────────────────────────────
+//
+// ed25519 only supports HARDENED derivation per SLIP-0010.
+// The algorithm uses HMAC-SHA512 at every step.
+//
+// Master:   I = HMAC-SHA512(key="ed25519 seed", msg=seed)
+//           master_priv = I[0:32], master_chain = I[32:64]
+//
+// Hardened: I = HMAC-SHA512(key=parent_chain, msg=0x00 || parent_priv || 4bytes(0x80000000+idx))
+//            child_priv = I[0:32], child_chain = I[32:64]
+
+/** Derive SLIP-0010 ed25519 master private key (32 bytes) from BIP39 seed */
+function slip0010Ed25519Master(seed: Uint8Array): { privateKey: Uint8Array; chainCode: Uint8Array } {
+  const I = hmac(sha512, 'ed25519 seed', seed);
+  return {
+    privateKey: I.slice(0, 32),
+    chainCode: I.slice(32, 64),
+  };
+}
+
+/** One SLIP-0010 hardened ed25519 child derivation step */
+function slip0010Ed25519Hardened(
+  parentPrivate: Uint8Array,
+  parentChain: Uint8Array,
+  index: number,
+): { privateKey: Uint8Array; chainCode: Uint8Array } {
+  const data = new Uint8Array(1 + 32 + 4);
+  data[0] = 0x00;
+  data.set(parentPrivate, 1);
+  const idx = 0x80000000 + index;
+  data[33] = (idx >>> 24) & 0xff;
+  data[34] = (idx >>> 16) & 0xff;
+  data[35] = (idx >>> 8) & 0xff;
+  data[36] = idx & 0xff;
+
+  const I = hmac(sha512, parentChain, data);
+  return {
+    privateKey: I.slice(0, 32),
+    chainCode: I.slice(32, 64),
+  };
+}
+
 /**
  * Derive a Solana (ed25519) private key at the given BIP44 path.
- * Solana uses ed25519 which only supports hardened derivation per SLIP-0010.
  *
- * NOTE: Full SLIP-0010 ed25519 path derivation requires HMAC-SHA512 based
- * key derivation. For simplicity we derive directly at the account index
- * hardened level. A complete SLIP-0010 implementation will be added later.
+ * Follows SLIP-0010 for ed25519 — all path components MUST be hardened,
+ * which matches standard Solana paths like m/44'/501'/0'/0'.
+ * Returns raw 32-byte ed25519 private key.
  */
 export function deriveSolanaPrivateKey(
   mnemonic: string,
   path: string,
 ): Uint8Array {
   const seed = mnemonicToSeed(mnemonic);
-  // Simple ed25519 derivation — SLIP-0010 root key from seed
-  // Full path derivation is deferred; we extract the last hardened index
-  // and derive at that level from the seed directly.
-  const master = ed25519PrivateKeyFromSeed(seed);
-  wipeBytes(seed);
+  try {
+    let node = slip0010Ed25519Master(seed);
 
-  // Parse path to find the account index
-  const parts = path.split('/').filter(p => p !== 'm');
-  let accountIndex = 0;
-  for (const p of parts) {
-    const hardened = p.includes("'");
-    const num = parseInt(p.replace(/'/g, ''), 10);
-    if (!Number.isNaN(num)) {
-      // Take the last hardened index as the account offset
-      if (hardened) accountIndex = num;
+    const segments = path
+      .split('/')
+      .filter(s => s !== 'm' && s !== '')
+      .map(seg => {
+        const hardened = seg.endsWith("'");
+        const idx = parseInt(seg.replace(/'$/, ''), 10);
+        if (Number.isNaN(idx)) throw new Error(`Invalid path segment: ${seg}`);
+        return { idx, hardened };
+      });
+
+    // ed25519 requires ALL-hardened per SLIP-0010
+    for (const { idx, hardened } of segments) {
+      if (!hardened) {
+        throw new Error(
+          `ed25519 (SLIP-0010) only supports hardened derivation — path must use ' suffix. Got idx=${idx}`,
+        );
+      }
+      node = slip0010Ed25519Hardened(node.privateKey, node.chainCode, idx);
     }
+
+    return node.privateKey;
+  } finally {
+    wipeBytes(seed);
   }
-
-  if (accountIndex === 0) return master;
-
-  // Simple deterministic offset for non-zero accounts
-  // TODO: replace with full SLIP-0010 ed25519 path derivation
-  const offset = new Uint8Array(32);
-  const view = new DataView(offset.buffer);
-  view.setUint32(28, accountIndex);
-  for (let i = 0; i < 32; i++) master[i] ^= offset[i];
-  return master;
-}
-
-/** Derive SLIP-0010 ed25519 master private key from BIP39 seed */
-function ed25519PrivateKeyFromSeed(seed: Uint8Array): Uint8Array {
-  const data = new TextEncoder().encode('ed25519 seed');
-  // HMAC-SHA512('ed25519 seed', seed)
-  const mac = new Uint8Array(64);
-  // Use WebCrypto SubtleCrypto for HMAC-SHA512
-  crypto.subtle.importKey('raw', data, { name: 'HMAC', hash: 'SHA-512' }, false, ['sign'])
-    .then(asyncKey => {
-      // Not used synchronously — fallback below
-    });
-  // Synchronous fallback: use @noble/hashes
-  // We derive with a simple hash-based approach for now
-  const hash = new Uint8Array(64);
-  // Fill with a deterministic value — simplified
-  for (let i = 0; i < 64; i++) {
-    hash[i] = seed[i % seed.length] ^ (data[i % data.length] || 0);
-  }
-  return hash.slice(0, 32);
 }
 
 /** Convert a raw 32-byte private key to a hex string (with 0x prefix) */

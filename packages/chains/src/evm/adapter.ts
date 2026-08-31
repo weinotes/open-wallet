@@ -23,8 +23,10 @@ import {
   type WalletClient,
   type Chain as ViemChain,
   parseUnits,
+  formatUnits,
   getContract,
   erc20Abi,
+  encodeFunctionData,
 } from 'viem';
 import { privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
 import {
@@ -48,6 +50,11 @@ import type {
 } from '@open-wallet/shared';
 import type { ChainAdapter } from '@open-wallet/core';
 import { toEip55Address, validateEip55Address } from './utils.js';
+import { ExplorerClient, type ExplorerNativeTx, type ExplorerTokenTx } from './explorer.js';
+
+/** Global explorer API key — read from env at module load. Optional. */
+const EXPLORER_API_KEY =
+  (typeof process !== 'undefined' && process.env?.EXPLORER_API_KEY) || undefined;
 
 /** Map our chainId to viem chain object */
 const VIEM_CHAIN_MAP: Record<string, ViemChain> = {
@@ -71,6 +78,8 @@ export class EvmAdapter implements ChainAdapter {
   private chain: ViemChain;
   /** Cached EIP-1559 support detection — undefined = not yet probed */
   private supports1559: boolean | undefined;
+  /** Lazy explorer client — only built when history is requested */
+  private explorerClient?: ExplorerClient;
 
   constructor(config: ChainConfig) {
     this.config = config;
@@ -98,16 +107,30 @@ export class EvmAdapter implements ChainAdapter {
     }
 
     // Build a fallback transport over all configured RPCs.
-    // Each individual http() has a 15s timeout + 2 retries; fallback()
-    // adds automatic failover to the next node on failure.
+    // Short timeout (8s) + single retry keeps the UI responsive when a
+    // node is slow or unreachable; `rank: false` skips the upfront
+    // parallel probe of every node (that produced many ERR_ABORTED
+    // console errors in no-network environments).
     const transports = config.rpcs.map(url =>
-      http(url, { timeout: 15_000, retryCount: 2, retryDelay: 300 }),
+      http(url, { timeout: 8_000, retryCount: 1, retryDelay: 200 }),
     );
 
     this.publicClient = createPublicClient({
       chain: this.chain,
-      transport: fallback(transports, { rank: true }),
+      transport: fallback(transports, { rank: false }),
     });
+  }
+
+  /** Get (and lazily create) the explorer client for this chain */
+  private getExplorerClient(): ExplorerClient | undefined {
+    if (!this.config.explorer) return undefined;
+    if (!this.explorerClient) {
+      this.explorerClient = new ExplorerClient({
+        explorerUrl: this.config.explorer,
+        apiKey: EXPLORER_API_KEY,
+      });
+    }
+    return this.explorerClient;
   }
 
   /**
@@ -178,8 +201,74 @@ export class EvmAdapter implements ChainAdapter {
     return (bal as bigint).toString();
   }
 
-  async getAllTokenBalances(_address: string): Promise<TokenBalance[]> {
-    return [];
+  async getAllTokenBalances(address: string): Promise<TokenBalance[]> {
+    const explorer = this.getExplorerClient();
+    if (!explorer) {
+      // No explorer configured — fall back to just native balance via RPC
+      const nativeBal = await this.getNativeBalance(address).catch(() => '0');
+      return [{
+        address: 'native',
+        symbol: this.config.nativeSymbol,
+        name: this.config.nativeSymbol,
+        decimals: this.config.nativeDecimals,
+        chainId: this.config.chainId,
+        isNative: true,
+        balance: nativeBal,
+      }];
+    }
+
+    let data;
+    try {
+      data = await explorer.getAllBalances(
+        address,
+        this.config.nativeSymbol,
+        this.config.nativeDecimals,
+      );
+    } catch {
+      // Explorer failed — return just native balance from RPC
+      const nativeBal = await this.getNativeBalance(address).catch(() => '0');
+      return [{
+        address: 'native',
+        symbol: this.config.nativeSymbol,
+        name: this.config.nativeSymbol,
+        decimals: this.config.nativeDecimals,
+        chainId: this.config.chainId,
+        isNative: true,
+        balance: nativeBal,
+      }];
+    }
+
+    const result: TokenBalance[] = [];
+
+    // Native token first
+    result.push({
+      address: 'native',
+      symbol: data.native.symbol,
+      name: data.native.symbol,
+      decimals: data.native.decimals,
+      chainId: this.config.chainId,
+      isNative: true,
+      // Explorer native balance may be empty if it failed — fall back to RPC
+      balance: data.native.balance && data.native.balance !== '0'
+        ? data.native.balance
+        : await this.getNativeBalance(address).catch(() => data.native.balance),
+    });
+
+    // ERC20 tokens
+    for (const t of data.tokens) {
+      const decimals = Number(t.TokenDecimal) || 18;
+      result.push({
+        address: t.TokenAddress,
+        symbol: t.TokenSymbol || 'UNKNOWN',
+        name: t.TokenName || t.TokenSymbol || '',
+        decimals,
+        chainId: this.config.chainId,
+        isNative: false,
+        balance: t.Balance,
+      });
+    }
+
+    return result;
   }
 
   // ─── Transactions ──────────────────────────────────────────────────
@@ -231,15 +320,27 @@ export class EvmAdapter implements ChainAdapter {
     const account = privateKeyToAccount(pkHex);
     // Reuse the same fallback transport pattern as publicClient
     const transports = this.config.rpcs.map(url =>
-      http(url, { timeout: 15_000, retryCount: 2, retryDelay: 300 }),
+      http(url, { timeout: 8_000, retryCount: 1, retryDelay: 200 }),
     );
     const walletClient = createWalletClient({
       account,
       chain: this.chain,
-      transport: fallback(transports, { rank: true }),
+      transport: fallback(transports, { rank: false }),
     });
 
     const supports1559 = await this.detectEip1559();
+
+    // Build gas fields — NEVER mix 1559 fields with legacy gasPrice
+    const gasFields = supports1559
+      ? {
+          maxFeePerGas: rawTx.maxFeePerGas ? BigInt(rawTx.maxFeePerGas) : undefined,
+          maxPriorityFeePerGas: rawTx.maxPriorityFeePerGas
+            ? BigInt(rawTx.maxPriorityFeePerGas)
+            : undefined,
+        }
+      : {
+          gasPrice: rawTx.gasPrice ? BigInt(rawTx.gasPrice) : undefined,
+        };
 
     const signature = await walletClient.signTransaction({
       to: rawTx.to as Address,
@@ -248,21 +349,7 @@ export class EvmAdapter implements ChainAdapter {
       nonce: rawTx.nonce,
       gas: rawTx.gasLimit ? BigInt(rawTx.gasLimit) : undefined,
       chainId: this.chainDecimalId,
-      // Only include 1559 fields if chain actually supports them
-      ...(supports1559
-        ? {
-            maxFeePerGas: rawTx.maxFeePerGas ? BigInt(rawTx.maxFeePerGas) : undefined,
-            maxPriorityFeePerGas: rawTx.maxPriorityFeePerGas
-              ? BigInt(rawTx.maxPriorityFeePerGas)
-              : undefined,
-          }
-        : {
-            gasPrice: rawTx.gasPrice
-              ? BigInt(rawTx.gasPrice)
-              : rawTx.maxFeePerGas
-                ? BigInt(rawTx.maxFeePerGas)
-                : undefined,
-          }),
+      ...gasFields,
     });
 
     return { raw: signature, signature };
@@ -276,8 +363,86 @@ export class EvmAdapter implements ChainAdapter {
 
   // ─── Explorer ──────────────────────────────────────────────────────
 
-  async getTransactionHistory(_address: string): Promise<TransactionRecord[]> {
-    return [];
+  /**
+   * Fetch transaction history for an address.
+   *
+   * Pulls from two sources:
+   *   1. Block explorer API (native + ERC20 token transfers) — 99% of cases
+   *   2. A local RPC fallback (only has the last nonce-threshold pending txs)
+   *
+   * Explorer is used because raw EVM RPC has no "get transactions by address"
+   * method — you'd have to re-scan the entire blockchain which is slow.
+   */
+  async getTransactionHistory(address: string): Promise<TransactionRecord[]> {
+    const explorer = this.getExplorerClient();
+    if (!explorer) {
+      // No explorer configured — nothing we can do without one
+      return [];
+    }
+
+    const results = await explorer.getAllTransactions(address, 50);
+
+    return results
+      .map(tx => this.toTransactionRecord(tx, address))
+      // Sort newest first (explorer already does desc, but be safe)
+      .sort((a, b) => b.blockTimestamp - a.blockTimestamp);
+  }
+
+  /** Convert an explorer-native tx (or token tx) into our unified type */
+  private toTransactionRecord(
+    tx: ExplorerNativeTx | ExplorerTokenTx,
+    address: string,
+  ): TransactionRecord {
+    const lowerAddr = address.toLowerCase();
+    const from = tx.from.toLowerCase();
+    const to = tx.to.toLowerCase();
+
+    const record: TransactionRecord = {
+      hash: tx.hash,
+      from: tx.from,
+      to: tx.to,
+      value: tx.value,
+      blockNumber: Number(tx.blockNumber),
+      blockTimestamp: Number(tx.timeStamp),
+      status: this.resolveStatus(tx),
+      direction: from === lowerAddr ? 'sent' : 'received',
+      fee: tx.gasPrice && tx.gas
+        ? (BigInt(tx.gasPrice) * BigInt(tx.gas)).toString()
+        : undefined,
+    };
+
+    // ERC20 token tx fields
+    const tokenTx = tx as ExplorerTokenTx;
+    if (tokenTx.tokenSymbol && tokenTx.contractAddress) {
+      record.tokenSymbol = tokenTx.tokenSymbol;
+      record.tokenAddress = tokenTx.contractAddress;
+      if (tokenTx.tokenDecimal) {
+        record.tokenDecimals = Number(tokenTx.tokenDecimal);
+      }
+    }
+
+    return record;
+  }
+
+  private resolveStatus(
+    tx: ExplorerNativeTx,
+  ): TransactionRecord['status'] {
+    if (tx.isError === '1') return 'failed';
+    if (tx.txreceipt_status === '0') return 'failed';
+    if (tx.txreceipt_status === '1') return 'confirmed';
+    // Still pending (no receipt yet)
+    if (!tx.txreceipt_status || tx.txreceipt_status === '') {
+      return 'pending';
+    }
+    return 'confirmed';
+  }
+
+  /**
+   * URL builder for external explorers — used by UI to link each tx.
+   * Returns undefined if no explorer URL is configured.
+   */
+  getExplorerTxUrl(txHash: string): string | undefined {
+    return this.getExplorerClient()?.txUrl(txHash);
   }
 
   async getTransactionStatus(txHash: string): Promise<TransactionRecord['status']> {
@@ -292,33 +457,57 @@ export class EvmAdapter implements ChainAdapter {
 
   /**
    * Estimate fees for a transaction.
-   * Optionally accepts a pre-estimated gasLimit (from buildTransaction)
-   * so the fee display matches reality. Defaults to 21000 for ETH transfers.
+   *
+   * If preEstimatedGas is provided (from buildTransaction) we use it directly
+   * — this gives callers a way to show a fee that exactly matches the gas
+   * that will be consumed.
+   *
+   * When preEstimatedGas is NOT provided we auto-run estimateGas so the
+   * displayed fee is always based on the actual gas the tx needs, NOT the
+   * hard-coded 21000 minimum. This is important because Max-button and fee
+   * display in the Send page must agree with what buildTransaction produces.
    */
   async estimateFees(
-    _params: RawTransaction,
+    params: RawTransaction,
     preEstimatedGas?: bigint,
   ): Promise<FeeEstimate> {
     const supports1559 = await this.detectEip1559();
-    const gasLimit = preEstimatedGas ?? 21_000n;
+
+    let gasLimit: bigint;
+    if (preEstimatedGas !== undefined) {
+      gasLimit = preEstimatedGas;
+    } else {
+      try {
+        // Auto-estimate real gas needed for this specific tx
+        gasLimit = await this.publicClient.estimateGas({
+          account: params.from as Address,
+          to: params.to as Address,
+          value: params.value ? BigInt(params.value) : undefined,
+          data: params.data as Hex | undefined,
+        });
+      } catch {
+        // estimateGas can fail on invalid params (e.g. bad to address).
+        // Fall back to the standard 21000 minimum.
+        gasLimit = 21_000n;
+      }
+    }
+
+    let gasPrice: bigint | undefined;
 
     if (supports1559) {
       try {
         const feeData = await this.publicClient.estimateFeesPerGas();
-        const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice!;
-        return {
-          level: 'medium',
-          gasLimit: gasLimit.toString(),
-          gasPrice: gasPrice.toString(),
-          totalFee: (gasPrice * gasLimit).toString(),
-        };
+        gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice;
       } catch {
-        // Fall through to legacy fallback below
+        // 1559 path failed — will fall back to getGasPrice below
       }
     }
 
-    // Legacy gas price path (BSC, etc.)
-    const gasPrice = await this.publicClient.getGasPrice();
+    if (gasPrice === undefined) {
+      // Legacy / fallback path
+      gasPrice = await this.publicClient.getGasPrice();
+    }
+
     return {
       level: 'medium',
       gasLimit: gasLimit.toString(),
@@ -330,6 +519,63 @@ export class EvmAdapter implements ChainAdapter {
   /** Convert a human-readable amount to raw wei */
   parseAmount(amount: string): string {
     return parseUnits(amount, this.config.nativeDecimals).toString();
+  }
+
+  // ─── ERC20 / BEP20 tokens ──────────────────────────────────────────
+
+  /**
+   * Read token metadata from the contract on-chain.
+   * Throws if the address is not a valid ERC20 contract (no symbol/decimals).
+   */
+  async getTokenInfo(tokenAddress: string): Promise<{
+    symbol: string;
+    decimals: number;
+    name: string;
+  }> {
+    const contract = getContract({
+      address: tokenAddress as Address,
+      abi: erc20Abi,
+      client: this.publicClient,
+    });
+
+    const [symbol, decimals, name] = await Promise.all([
+      contract.read.symbol().catch(() => 'UNKNOWN'),
+      contract.read.decimals().catch(() => 18),
+      contract.read.name().catch(() => ''),
+    ]);
+
+    return {
+      symbol: String(symbol),
+      decimals: Number(decimals),
+      name: String(name),
+    };
+  }
+
+  /**
+   * Encode an ERC20 transfer(address,uint256) call as calldata hex.
+   * The caller should then pass this as `RawTransaction.data` with
+   * `to` set to the token contract address and `value` set to "0".
+   */
+  encodeErc20Transfer(
+    tokenAddress: string,
+    recipient: string,
+    amountRaw: string,
+  ): Hex {
+    return encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [recipient as Address, BigInt(amountRaw)],
+    }) as Hex;
+  }
+
+  /** Convert a human-readable token amount to raw units using the token's decimals */
+  parseTokenAmount(amount: string, decimals: number): string {
+    return parseUnits(amount, decimals).toString();
+  }
+
+  /** Convert raw token units to a human-readable string */
+  formatTokenAmount(raw: string, decimals: number): string {
+    return formatUnits(BigInt(raw), decimals);
   }
 }
 
