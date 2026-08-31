@@ -9,7 +9,8 @@
  *   Step 5: Done → route to Home (store.unlocked becomes true)
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createMnemonic, isValidMnemonic, evaluatePassword, encryptVault } from '@open-wallet/core';
 import { Button, Input } from '@open-wallet/ui';
 import { useWalletStore } from '../store/wallet.js';
@@ -17,7 +18,36 @@ import { CHAIN_CONFIGS } from '@open-wallet/chains';
 
 type Step = 'choice' | 'create' | 'verify' | 'import' | 'password';
 
+/** Randomly pick N word positions + generate distractors from the same mnemonic */
+function buildVerifyQuiz(words: string[], count = 3): {
+  positions: number[];          // indices into words[]
+  options: string[][];          // count arrays, each has 1 correct + 3 distractors
+} {
+  const shuffled = [...words].sort(() => Math.random() - 0.5);
+  const positions: number[] = [];
+  const pickedIdx = new Set<number>();
+  while (positions.length < count && pickedIdx.size < words.length) {
+    const idx = Math.floor(Math.random() * words.length);
+    if (!pickedIdx.has(idx)) {
+      pickedIdx.add(idx);
+      positions.push(idx);
+    }
+  }
+  positions.sort((a, b) => a - b);
+
+  const options = positions.map(pos => {
+    const correct = words[pos];
+    // Pick 3 distractors from the rest
+    const distractors = shuffled.filter(w => w !== correct).slice(0, 3);
+    const all = [correct, ...distractors].sort(() => Math.random() - 0.5);
+    return all;
+  });
+
+  return { positions, options };
+}
+
 export function Onboarding() {
+  const { t } = useTranslation();
   const [step, setStep] = useState<Step>('choice');
   const [mode, setMode] = useState<'create' | 'import'>('create');
   const [mnemonic, setMnemonic] = useState('');
@@ -26,6 +56,12 @@ export function Onboarding() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Verify step state
+  const verify = useMemo(
+    () => (mnemonic ? buildVerifyQuiz(mnemonic.split(' '), 3) : null),
+    [mnemonic],
+  );
+  const [verifyAnswers, setVerifyAnswers] = useState<Record<number, string>>({});
 
   const setVault = useWalletStore(s => s.setVault);
   const unlock = useWalletStore(s => s.unlock);
@@ -35,6 +71,7 @@ export function Onboarding() {
   const handleCreateNew = () => {
     setMode('create');
     setMnemonic(createMnemonic());
+    setVerifyAnswers({});
     go('create');
   };
 
@@ -45,27 +82,46 @@ export function Onboarding() {
 
   const handleImportNext = () => {
     if (!isValidMnemonic(importMnemonic)) {
-      setError('Invalid mnemonic phrase. Please check all words.');
+      setError(t('onboarding.invalidMnemonic'));
       return;
     }
     setMnemonic(importMnemonic.trim());
     go('password');
   };
 
-  const handleVerifyNext = () => go('password');
+  const handleVerifyNext = () => {
+    // In create mode → go through verify step first
+    if (mode === 'create') {
+      go('verify');
+    } else {
+      go('password');
+    }
+  };
 
-  /**
-   * Final step: encrypt vault → persist → auto-unlock.
-   * After this, store.unlocked === true → router renders Home.
-   */
+  const handleVerifySubmit = () => {
+    if (!verify) return;
+    const words = mnemonic.split(' ');
+    const correct = verify.positions.every(
+      pos => verifyAnswers[pos] === words[pos],
+    );
+    if (!correct) {
+      setError(t('onboarding.incorrectVerify'));
+      // Reset so they can try again
+      setVerifyAnswers({});
+      return;
+    }
+    setError('');
+    go('password');
+  };
+
   const handlePasswordNext = async () => {
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError(t('onboarding.passwordsDoNotMatch'));
       return;
     }
     const evalResult = evaluatePassword(password);
     if (evalResult.score < 2) {
-      setError(evalResult.errors[0] ?? 'Password too weak');
+      setError(evalResult.errors[0] ?? t('onboarding.passwordTooWeak'));
       return;
     }
 
@@ -110,12 +166,12 @@ export function Onboarding() {
       <div style={cardStyle}>
         <div style={titleStyle}>OpenWallet</div>
         <div style={{ textAlign: 'center', color: 'var(--ow-text-secondary)' }}>
-          Your keys, your coins. Self-custodial multi-chain wallet.
+          {t('onboarding.slogan')}
         </div>
-        <Button size="lg" onClick={handleCreateNew}>Create New Wallet</Button>
-        <Button variant="secondary" size="lg" onClick={handleImport}>Import Existing Wallet</Button>
+        <Button size="lg" onClick={handleCreateNew}>{t('onboarding.createNewWallet')}</Button>
+        <Button variant="secondary" size="lg" onClick={handleImport}>{t('onboarding.importExistingWallet')}</Button>
         <div style={{ textAlign: 'center', fontSize: 'var(--ow-font-size-xs)', color: 'var(--ow-text-tertiary)' }}>
-          Apache-2.0 Licensed · No servers · No tracking
+          {t('onboarding.license')}
         </div>
       </div>
     );
@@ -123,39 +179,114 @@ export function Onboarding() {
 
   // ──────────── Step 2: Show generated mnemonic ────────────
   if (step === 'create') {
+    const words = mnemonic.split(' ');
     return (
       <div style={cardStyle}>
-        <div style={titleStyle}>Your Recovery Phrase</div>
+        <div style={titleStyle}>{t('onboarding.recoveryPhraseTitle')}</div>
         <div style={{ color: 'var(--ow-text-secondary)', fontSize: 'var(--ow-font-size-sm)', textAlign: 'center' }}>
-          Write these 24 words in order. Store them safely. This is the ONLY way to recover your wallet.
+          {t('onboarding.writeWords', { count: words.length })}
         </div>
         <div style={{
           backgroundColor: 'var(--ow-bg-tertiary)',
           padding: 'var(--ow-space-4)',
           borderRadius: 'var(--ow-radius-md)',
-          fontFamily: 'var(--ow-font-mono)',
-          fontSize: 'var(--ow-font-size-sm)',
           border: '1px solid var(--ow-border)',
         }}>
-          {mnemonic}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 'var(--ow-space-2)',
+            fontFamily: 'var(--ow-font-mono)',
+            fontSize: 'var(--ow-font-size-sm)',
+          }}>
+            {words.map((w, i) => (
+              <div key={i} style={{
+                display: 'flex',
+                gap: 'var(--ow-space-2)',
+                padding: '2px 4px',
+              }}>
+                <span style={{ color: 'var(--ow-text-tertiary)', minWidth: '24px', textAlign: 'right' }}>{i + 1}.</span>
+                <span>{w}</span>
+              </div>
+            ))}
+          </div>
         </div>
         <div style={{ color: 'var(--ow-error)', fontSize: 'var(--ow-font-size-xs)', textAlign: 'center' }}>
-          ⚠ Never share this phrase with anyone
+          {t('onboarding.neverShare')}
         </div>
-        <Button onClick={handleVerifyNext}>I've saved it, continue</Button>
+        <Button onClick={handleVerifyNext}>{t('onboarding.savedContinue')}</Button>
       </div>
     );
   }
 
-  // ──────────── Step 3: Verify (placeholder) ────────────
-  if (step === 'verify') {
+  // ──────────── Step 3: Verify recovery phrase ────────────
+  if (step === 'verify' && verify) {
+    const words = mnemonic.split(' ');
+    const allCorrect = verify.positions.every(pos => verifyAnswers[pos] === words[pos]);
+
     return (
       <div style={cardStyle}>
-        <div style={titleStyle}>Verify Recovery Phrase</div>
-        <div style={{ color: 'var(--ow-text-secondary)', textAlign: 'center' }}>
-          Coming in next iteration — you'll be asked to select a few words in order.
+        <div style={titleStyle}>{t('onboarding.verifyTitle')}</div>
+        <div style={{ color: 'var(--ow-text-secondary)', textAlign: 'center', fontSize: 'var(--ow-font-size-sm)' }}>
+          {t('onboarding.verifyDesc')}
         </div>
-        <Button onClick={handleVerifyNext}>Continue</Button>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ow-space-4)' }}>
+          {verify.positions.map((pos, idx) => (
+            <div key={pos}>
+              <div style={{
+                fontSize: 'var(--ow-font-size-sm)',
+                color: 'var(--ow-text-tertiary)',
+                marginBottom: 'var(--ow-space-2)',
+              }}>
+                {t('onboarding.wordNumber', { n: pos + 1 })}
+              </div>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: 'var(--ow-space-2)',
+              }}>
+                {verify.options[idx].map(opt => {
+                  const selected = verifyAnswers[pos] === opt;
+                  return (
+                    <button
+                      key={opt}
+                      onClick={() => { setError(''); setVerifyAnswers(prev => ({ ...prev, [pos]: opt })); }}
+                      style={{
+                        padding: 'var(--ow-space-3)',
+                        backgroundColor: selected ? 'var(--ow-info)' : 'var(--ow-bg-tertiary)',
+                        color: selected ? '#000' : 'var(--ow-text-primary)',
+                        border: selected ? '2px solid var(--ow-info)' : '1px solid var(--ow-border-subtle)',
+                        borderRadius: 'var(--ow-radius-md)',
+                        fontFamily: 'var(--ow-font-mono)',
+                        fontSize: 'var(--ow-font-size-sm)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div style={{
+            color: 'var(--ow-error)',
+            fontSize: 'var(--ow-font-size-sm)',
+            textAlign: 'center',
+          }}>
+            {error}
+          </div>
+        )}
+
+        <Button onClick={handleVerifySubmit} disabled={!allCorrect}>
+          {t('common.continue')}
+        </Button>
+        <Button variant="ghost" onClick={() => go('create')}>← {t('common.back')}</Button>
       </div>
     );
   }
@@ -164,16 +295,16 @@ export function Onboarding() {
   if (step === 'import') {
     return (
       <div style={cardStyle}>
-        <div style={titleStyle}>Import Recovery Phrase</div>
+        <div style={titleStyle}>{t('onboarding.importTitle')}</div>
         <Input
-          label="Enter your 12 or 24 word phrase"
-          placeholder="word1 word2 word3 ..."
+          label={t('onboarding.importLabel')}
+          placeholder={t('onboarding.importPlaceholder')}
           value={importMnemonic}
           onChange={e => setImportMnemonic(e.target.value)}
           error={error}
         />
-        <Button onClick={handleImportNext} disabled={!importMnemonic.trim()}>Next</Button>
-        <Button variant="ghost" onClick={() => go('choice')}>← Back</Button>
+        <Button onClick={handleImportNext} disabled={!importMnemonic.trim()}>{t('common.next')}</Button>
+        <Button variant="ghost" onClick={() => go('choice')}>← {t('common.back')}</Button>
       </div>
     );
   }
@@ -181,29 +312,29 @@ export function Onboarding() {
   // ──────────── Step 5: Set password ────────────
   return (
     <div style={cardStyle}>
-      <div style={titleStyle}>Set Password</div>
+      <div style={titleStyle}>{t('onboarding.setPasswordTitle')}</div>
       <div style={{ color: 'var(--ow-text-secondary)', fontSize: 'var(--ow-font-size-sm)', textAlign: 'center' }}>
-        This password encrypts your wallet locally. We cannot help you recover it.
+        {t('onboarding.setPasswordDesc')}
       </div>
       <Input
-        label="Password"
+        label={t('onboarding.passwordLabel')}
         type="password"
-        placeholder="Min 8 chars, uppercase + number"
+        placeholder={t('onboarding.passwordPlaceholder')}
         value={password}
         onChange={e => setPassword(e.target.value)}
       />
       <Input
-        label="Confirm Password"
+        label={t('onboarding.confirmPasswordLabel')}
         type="password"
-        placeholder="Re-enter password"
+        placeholder={t('onboarding.confirmPasswordPlaceholder')}
         value={confirmPassword}
         onChange={e => setConfirmPassword(e.target.value)}
         error={error}
       />
       <Button onClick={handlePasswordNext} variant="primary" loading={loading}>
-        {mode === 'create' ? 'Create Wallet' : 'Import Wallet'}
+        {mode === 'create' ? t('onboarding.createWallet') : t('onboarding.importWallet')}
       </Button>
-      <Button variant="ghost" onClick={() => go(mode === 'create' ? 'create' : 'import')}>← Back</Button>
+      <Button variant="ghost" onClick={() => go(mode === 'create' ? 'verify' : 'import')}>← {t('common.back')}</Button>
     </div>
   );
 }

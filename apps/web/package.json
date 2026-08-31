@@ -11,14 +11,18 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@open-wallet/shared": "workspace:*",
-    "@open-wallet/core": "workspace:*",
     "@open-wallet/chains": "workspace:*",
+    "@open-wallet/core": "workspace:*",
+    "@open-wallet/shared": "workspace:*",
     "@open-wallet/storage": "workspace:*",
     "@open-wallet/ui": "workspace:*",
+    "buffer": "^6.0.3",
+    "i18next": "^26.4.0",
     "lucide-react": "^0.460.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-i18next": "^17.0.12",
     "react-router-dom": "^7.0.0",
     "zustand": "^5.0.0"
   },

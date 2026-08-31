@@ -11,12 +11,14 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { KeyRound, Eye, EyeOff } from 'lucide-react';
 import { Button, Input } from '@open-wallet/ui';
 import { useWalletStore } from '../store/wallet.js';
 import { CHAIN_CONFIGS } from '@open-wallet/chains';
 
 export function Unlock() {
+  const { t } = useTranslation();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -29,7 +31,7 @@ export function Unlock() {
   const handleUnlock = async () => {
     setError('');
     if (!password) {
-      setError('Please enter your password');
+      setError(t('unlock.enterPassword'));
       return;
     }
     setLoading(true);
@@ -40,7 +42,7 @@ export function Unlock() {
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes('Invalid password')) {
-        setError('Incorrect password. Please try again.');
+        setError(t('unlock.incorrectPassword'));
       } else {
         setError(msg);
       }
@@ -52,7 +54,7 @@ export function Unlock() {
   };
 
   const handleReset = async () => {
-    if (confirm('Reset wallet? This will erase all data. Make sure you have your recovery phrase.')) {
+    if (confirm(t('unlock.resetConfirm'))) {
       clearVault();
     }
   };
@@ -87,21 +89,21 @@ export function Unlock() {
           <KeyRound size={28} />
         </div>
         <div style={{ fontSize: 'var(--ow-font-size-xl)', fontWeight: 700 }}>
-          Unlock Your Wallet
+          {t('unlock.title')}
         </div>
         <div style={{
           fontSize: 'var(--ow-font-size-sm)',
           color: 'var(--ow-text-secondary)',
           textAlign: 'center',
         }}>
-          Enter your password to unlock. Your keys never leave this device.
+          {t('unlock.desc')}
         </div>
       </div>
 
       <Input
-        label="Password"
+        label={t('unlock.passwordLabel')}
         type={showPassword ? 'text' : 'password'}
-        placeholder="Enter your password"
+        placeholder={t('unlock.passwordPlaceholder')}
         value={password}
         onChange={e => setPassword(e.target.value)}
         onKeyDown={e => {
@@ -119,7 +121,7 @@ export function Unlock() {
         cursor: 'pointer',
       }} onClick={() => setShowPassword(s => !s)}>
         {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-        {showPassword ? 'Hide password' : 'Show password'}
+        {showPassword ? t('unlock.hidePassword') : t('unlock.showPassword')}
       </div>
 
       <Button
@@ -128,7 +130,7 @@ export function Unlock() {
         disabled={!password || loading}
         size="lg"
       >
-        {loading ? 'Unlocking...' : 'Unlock'}
+        {loading ? t('unlock.unlocking') : t('unlock.unlock')}
       </Button>
 
       <div style={{
@@ -146,7 +148,7 @@ export function Unlock() {
             cursor: 'pointer',
           }}
         >
-          Forgot password? Reset wallet
+          {t('unlock.forgotPassword')}
         </button>
       </div>
     </div>

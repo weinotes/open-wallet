@@ -15,10 +15,18 @@ html, body, #root {
 body {
   background-color: var(--ow-bg-primary);
   color: var(--ow-text-primary);
-  font-family: var(--ow-font-sans);
+  /* Multi-script font stack: covers Latin, CJK (ja/zh/ko) and Arabic */
+  font-family: var(--ow-font-sans), 'Noto Sans SC', 'Noto Sans JP',
+    'Noto Sans KR', 'Noto Sans Arabic', 'Segoe UI', system-ui, -apple-system,
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
+}
+
+/* Ensure monospace numbers/hashes render consistently across scripts */
+code, pre, [class*='font-mono'] {
+  font-family: var(--ow-font-mono), 'SF Mono', ui-monospace, monospace;
 }
 
 /* Simple scrollbar styling */

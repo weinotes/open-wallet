@@ -15,10 +15,13 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { VaultData, Account } from '@open-wallet/shared';
-import { APP_NAME, DEFAULT_LANGUAGE, DEFAULT_THEME } from '@open-wallet/shared';
+import type { VaultData, Account, TransactionRecord, AppLanguage } from '@open-wallet/shared';
+import { APP_NAME, DEFAULT_THEME, detectSystemLanguage } from '@open-wallet/shared';
 import type { ChainConfig } from '@open-wallet/shared';
 import { unlock as sessionUnlock, lock as sessionLock } from '@open-wallet/core';
+
+/** In-memory pending txs — chainId → list of locally-known transactions */
+type PendingTxMap = Record<string, TransactionRecord[]>;
 
 interface WalletState {
   // ─── Vault (persisted encrypted blob — safe) ────
@@ -31,9 +34,14 @@ interface WalletState {
   // ─── Accounts (public chain addresses, NOT persisted — re-derived on unlock) ──
   accounts: Account[];
 
+  // ─── Local pending transactions (NOT persisted — RAM only, refresh → gone) ──
+  // Populated after Send broadcasts so Home/History can show them instantly
+  // before the explorer API picks them up (10-30s delay typical).
+  pendingTxs: PendingTxMap;
+
   // ─── UI state (persisted — safe, just preferences) ──
   theme: 'dark' | 'light';
-  language: 'en' | 'zh';
+  language: AppLanguage;
   activeChainId: string;
   activeAccountId: string | null;
 
@@ -48,8 +56,15 @@ interface WalletState {
   setActiveAccount: (id: string) => void;
 
   setTheme: (t: 'dark' | 'light') => void;
-  setLanguage: (l: 'en' | 'zh') => void;
+  setLanguage: (l: AppLanguage) => void;
   setActiveChain: (chainId: string) => void;
+
+  /** Add a locally-known pending tx (just-broadcast, not yet confirmed) */
+  addPendingTx: (chainId: string, tx: TransactionRecord) => void;
+  /** Remove a tx from local pending list (after explorer returns it, or on fail) */
+  removePendingTx: (chainId: string, txHash: string) => void;
+  /** Clear all pending txs (e.g. on lock) */
+  clearPendingTxs: () => void;
 }
 
 export const useWalletStore = create<WalletState>()(
@@ -61,8 +76,12 @@ export const useWalletStore = create<WalletState>()(
       unlocked: false,
       accounts: [],
 
+      pendingTxs: {},
+
       theme: DEFAULT_THEME,
-      language: DEFAULT_LANGUAGE,
+      // Default to the device/system language; overridden by persisted
+      // value once the user picks a language manually.
+      language: detectSystemLanguage(),
       activeChainId: 'bsc-56',
       activeAccountId: null,
 
@@ -77,6 +96,7 @@ export const useWalletStore = create<WalletState>()(
           unlocked: false,
           accounts: [],
           activeAccountId: null,
+          pendingTxs: {},
         });
       },
 
@@ -91,12 +111,13 @@ export const useWalletStore = create<WalletState>()(
           unlocked: true,
           accounts,
           activeAccountId: state.activeAccountId ?? accounts[0]?.id ?? null,
+          pendingTxs: {},   // clear stale pending on each fresh unlock
         });
       },
 
       lock: () => {
         sessionLock();
-        set({ unlocked: false, accounts: [], activeAccountId: null });
+        set({ unlocked: false, accounts: [], activeAccountId: null, pendingTxs: {} });
       },
 
       // ── UI ──
@@ -104,6 +125,28 @@ export const useWalletStore = create<WalletState>()(
       setTheme: (t) => set({ theme: t }),
       setLanguage: (l) => set({ language: l }),
       setActiveChain: (chainId) => set({ activeChainId: chainId }),
+
+      // ── Local pending transactions (NOT persisted) ──
+      addPendingTx: (chainId, tx) => set(state => {
+        const list = state.pendingTxs[chainId] ?? [];
+        // Avoid duplicates — dedupe by hash
+        const filtered = list.filter(t => t.hash !== tx.hash);
+        return {
+          pendingTxs: {
+            ...state.pendingTxs,
+            [chainId]: [tx, ...filtered],
+          },
+        };
+      }),
+      removePendingTx: (chainId, txHash) => set(state => {
+        const list = state.pendingTxs[chainId] ?? [];
+        const filtered = list.filter(t => t.hash !== txHash);
+        const next = { ...state.pendingTxs };
+        if (filtered.length === 0) delete next[chainId];
+        else next[chainId] = filtered;
+        return { pendingTxs: next };
+      }),
+      clearPendingTxs: () => set({ pendingTxs: {} }),
     }),
     {
       name: `${APP_NAME}-store`,

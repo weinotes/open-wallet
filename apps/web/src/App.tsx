@@ -1,5 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useEffect } from 'react';
+import i18n from './i18n/index.js';
+import { syncDocumentDirection } from './i18n/index.js';
 import { Onboarding } from './pages/Onboarding.js';
 import { Unlock } from './pages/Unlock.js';
 import { Home } from './pages/Home.js';
@@ -22,6 +24,13 @@ function App() {
   const vaultExists = useWalletStore(s => s.vaultExists);
   const unlocked = useWalletStore(s => s.unlocked);
   const lock = useWalletStore(s => s.lock);
+  const language = useWalletStore(s => s.language);
+
+  // ── Keep i18next + document direction in sync with the store ──
+  useEffect(() => {
+    void i18n.changeLanguage(language);
+    syncDocumentDirection(language);
+  }, [language]);
 
   // ── Auto-lock when user leaves the page ──
   useEffect(() => {
