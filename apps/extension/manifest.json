@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "OpenWallet",
+  "version": "0.1.0",
+  "description": "Open-source, self-custodial, multi-chain crypto wallet. Your keys, your coins.",
+  "default_locale": "en",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OpenWallet",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.binance.org/*",
+    "https://*.binance.org/*",
+    "https://bsc-testnet.publicnode.com/*",
+    "https://api.bscscan.com/*",
+    "https://api-testnet.bscscan.com/*",
+    "https://*.etherscan.io/*",
+    "https://*.polygonscan.com/*",
+    "https://*.arbiscan.io/*",
+    "https://*.optimistic.etherscan.io/*",
+    "https://*.basescan.org/*",
+    "https://*.snowtrace.io/*",
+    "https://*.ankr.com/*",
+    "https://*.publicnode.com/*",
+    "https://*.binance.org/*",
+    "https://api.mainnet-beta.solana.com/*",
+    "https://api.devnet.solana.com/*",
+    "https://*.solana.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}
