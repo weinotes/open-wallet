@@ -1,0 +1,79 @@
+# OpenWallet
+
+[简体中文](README.zh-CN.md) | English
+
+**Author:** Davey Wong <wgwcko@gmail.com>
+
+Open-source, multi-chain, non-custodial cryptocurrency wallet. Private keys never leave your device — no backend, fully auditable.
+
+> ⚠️ **Alpha / WIP** — under active development. Do not store significant funds yet.
+
+## Features
+
+- HD wallet creation & import (BIP39 mnemonic + private key)
+- Multi-chain unified asset view: Ethereum, BNB Chain, Polygon, Arbitrum, Optimism, Base, Avalanche, Solana
+- Native + ERC20/BEP20/SPL token balances
+- Send native tokens with dynamic gas estimation (slow / normal / fast / custom)
+- Transaction history via block explorer APIs
+- Encrypted vault: AES-256-GCM + PBKDF2-SHA512 (200,000 iterations)
+- Auto-lock on tab hidden (5 min), session keys kept in memory only
+- Dark / light theme, zh / en i18n
+
+## Tech Stack
+
+| Layer | Tech |
+|-------|------|
+| Language | TypeScript 5.x |
+| Monorepo | pnpm + Turborepo |
+| Web | React 19 + Vite 6 + Zustand |
+| Crypto | noble-curves, tweetnacl, bip39, @scure/bip32 |
+| EVM | viem 2.x |
+| Solana | @solana/web3.js |
+| Storage | Cross-platform abstraction (localStorage / MMKV / Tauri Store) |
+
+## Repository Structure
+
+```
+open-wallet/
+├── apps/
+│   └── web/          # Web app (React + Vite + PWA)
+├── packages/
+│   ├── core/         # Wallet core: keys, vault encryption, session, chain abstraction
+│   ├── chains/       # Chain adapters (EVM / Solana)
+│   ├── ui/           # Shared UI components
+│   ├── shared/       # Shared types, utils, constants
+│   └── storage/      # Cross-platform encrypted storage abstraction
+└── scripts/          # Dev utilities (e.g. EVM send-flow integration test)
+```
+
+## Getting Started
+
+```bash
+pnpm install
+pnpm dev          # start web app (Vite dev server)
+pnpm build        # build all packages + web
+pnpm typecheck    # type-check all workspaces
+```
+
+Requires Node.js >= 20.19 and pnpm >= 9.
+
+## Security Principles
+
+- Private keys / mnemonics never leave the device, never uploaded
+- All signing happens locally
+- Vault encrypted with AES-256-GCM, key derived via PBKDF2-SHA512 (200k iterations)
+- Session secrets exist in memory only; auto-lock on visibility loss
+
+See `TECH_DESIGN.md` for the full technical design and security audit checklist.
+
+## Roadmap
+
+- Phase 1 (current): MVP — multi-chain send/receive, encrypted vault, web app
+- Phase 2: Mobile (React Native) & Desktop (Tauri), hardware wallet (Ledger), NFT view, more chains
+- Phase 3: DeFi — DApp browser, swap aggregation, staking, WalletConnect v2
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
+
+**Author:** Davey Wong <wgwcko@gmail.com> · [www.guangweiblog.com](https://www.guangweiblog.com)

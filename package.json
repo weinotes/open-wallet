@@ -1,0 +1,28 @@
+{
+  "name": "open-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-source multi-chain non-custodial crypto wallet",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "turbo": "^2.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "@vitest/coverage-v8": "^2.1.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0"
+  }
+}

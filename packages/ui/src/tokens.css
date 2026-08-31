@@ -1,0 +1,93 @@
+/**
+ * Design tokens — CSS custom properties for consistent theming across platforms.
+ * All UI components must reference these variables instead of hardcoded values.
+ *
+ * Token naming convention: --ow-<category>-<name>
+ */
+
+:root {
+  /* Spacing scale */
+  --ow-space-1: 0.25rem;
+  --ow-space-2: 0.5rem;
+  --ow-space-3: 0.75rem;
+  --ow-space-4: 1rem;
+  --ow-space-5: 1.25rem;
+  --ow-space-6: 1.5rem;
+  --ow-space-8: 2rem;
+  --ow-space-12: 3rem;
+  --ow-space-16: 4rem;
+
+  /* Border radius */
+  --ow-radius-sm: 0.375rem;
+  --ow-radius-md: 0.5rem;
+  --ow-radius-lg: 0.75rem;
+  --ow-radius-xl: 1rem;
+  --ow-radius-full: 9999px;
+
+  /* Font */
+  --ow-font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ow-font-mono: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
+  --ow-font-size-xs: 0.75rem;
+  --ow-font-size-sm: 0.875rem;
+  --ow-font-size-base: 1rem;
+  --ow-font-size-lg: 1.125rem;
+  --ow-font-size-xl: 1.25rem;
+  --ow-font-size-2xl: 1.5rem;
+  --ow-font-size-3xl: 2rem;
+
+  /* Shadows */
+  --ow-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --ow-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --ow-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark theme (default) */
+:root,
+[data-theme='dark'] {
+  --ow-bg-primary: #0d1117;
+  --ow-bg-secondary: #161b22;
+  --ow-bg-tertiary: #21262d;
+  --ow-bg-hover: #30363d;
+
+  --ow-text-primary: #e6edf3;
+  --ow-text-secondary: #8b949e;
+  --ow-text-tertiary: #6e7681;
+  --ow-text-inverse: #0d1117;
+
+  --ow-border: #30363d;
+  --ow-border-subtle: #21262d;
+
+  --ow-accent: #2f81f7;
+  --ow-accent-hover: #1f6feb;
+  --ow-accent-fg: #ffffff;
+
+  --ow-success: #3fb950;
+  --ow-warning: #d29922;
+  --ow-error: #f85149;
+  --ow-info: #58a6ff;
+}
+
+/* Light theme */
+[data-theme='light'] {
+  --ow-bg-primary: #ffffff;
+  --ow-bg-secondary: #f6f8fa;
+  --ow-bg-tertiary: #eaeef2;
+  --ow-bg-hover: #d0d7de;
+
+  --ow-text-primary: #1f2328;
+  --ow-text-secondary: #656d76;
+  --ow-text-tertiary: #8c959f;
+  --ow-text-inverse: #ffffff;
+
+  --ow-border: #d0d7de;
+  --ow-border-subtle: #eaeef2;
+
+  --ow-accent: #0969da;
+  --ow-accent-hover: #0550ae;
+  --ow-accent-fg: #ffffff;
+
+  --ow-success: #1a7f37;
+  --ow-warning: #9a6700;
+  --ow-error: #cf222e;
+  --ow-info: #0969da;
+}

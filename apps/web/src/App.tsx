@@ -1,0 +1,93 @@
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Onboarding } from './pages/Onboarding.js';
+import { Unlock } from './pages/Unlock.js';
+import { Home } from './pages/Home.js';
+import { Send } from './pages/Send.js';
+import { Receive } from './pages/Receive.js';
+import { History } from './pages/History.js';
+import { Settings } from './pages/Settings.js';
+import { useWalletStore } from './store/wallet.js';
+import { registerAllChains } from '@open-wallet/chains';
+import { touchActivity } from '@open-wallet/core';
+
+// Register chain adapters once at app startup
+registerAllChains();
+
+/** Auto-lock after 5 minutes of visibility loss */
+const AUTO_LOCK_MS = 5 * 60 * 1000;
+let lockTimer: ReturnType<typeof setTimeout> | null = null;
+
+function App() {
+  const vaultExists = useWalletStore(s => s.vaultExists);
+  const unlocked = useWalletStore(s => s.unlocked);
+  const lock = useWalletStore(s => s.lock);
+
+  // ── Auto-lock when user leaves the page ──
+  useEffect(() => {
+    if (!vaultExists) return;
+
+    const scheduleLock = () => {
+      if (lockTimer) clearTimeout(lockTimer);
+      lockTimer = setTimeout(() => {
+        const now = Date.now();
+        const last = useWalletStore.getState();
+        // Only lock if not visible for AUTO_LOCK_MS
+        if (document.visibilityState === 'hidden') {
+          lock();
+        }
+        void now; void last; // silence unused vars
+      }, AUTO_LOCK_MS);
+    };
+
+    const handleHide = () => {
+      // Immediate-ish: schedule lock timer
+      scheduleLock();
+    };
+
+    const handleShow = () => {
+      if (lockTimer) {
+        clearTimeout(lockTimer);
+        lockTimer = null;
+      }
+      // Touch session on resume
+      if (useWalletStore.getState().unlocked) {
+        touchActivity();
+      }
+    };
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') handleHide();
+      else handleShow();
+    });
+
+    return () => {
+      if (lockTimer) clearTimeout(lockTimer);
+    };
+  }, [vaultExists, lock]);
+
+  // ── 3-state routing guard ──
+  if (!vaultExists) {
+    // No wallet initialized → Onboarding
+    return <Onboarding />;
+  }
+
+  if (!unlocked) {
+    // Vault exists but locked → Unlock screen
+    return <Unlock />;
+  }
+
+  // Unlocked → main app routes
+  return (
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/send" element={<Send />} />
+      <Route path="/receive" element={<Receive />} />
+      <Route path="/history" element={<History />} />
+      <Route path="/settings" element={<Settings />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export default App;

@@ -1,0 +1,53 @@
+/**
+ * Global app styles. Uses design tokens from @open-wallet/ui/tokens.css.
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--ow-bg-primary);
+  color: var(--ow-text-primary);
+  font-family: var(--ow-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+/* Simple scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ow-bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ow-bg-hover);
+  border-radius: var(--ow-radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ow-text-tertiary);
+}
+
+/* Selection */
+::selection {
+  background: var(--ow-accent);
+  color: var(--ow-accent-fg);
+}
+
+/* Global link style */
+a {
+  color: var(--ow-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
