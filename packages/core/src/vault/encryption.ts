@@ -146,8 +146,9 @@ export function evaluatePassword(password: string): {
 
   if (/[^a-zA-Z0-9]/.test(password)) score++;
 
-  // Cap score at 4
-  const finalScore = Math.min(score, 4) as 0 | 1 | 2 | 3 | 4;
+  // Cap score at 4 — and a short password can never be strong: the length
+  // gate is a hard floor, so at most 1 point for short inputs.
+  const finalScore = (Math.min(score, 4) === 4 && password.length < 8 ? 1 : Math.min(score, 4)) as 0 | 1 | 2 | 3 | 4;
   const labels: Record<number, 'weak' | 'fair' | 'good' | 'strong'> = {
     0: 'weak', 1: 'weak', 2: 'fair', 3: 'good', 4: 'strong',
   };
