@@ -74,6 +74,6 @@ pnpm typecheck    # 全工作区类型检查
 
 ## 许可证
 
-Apache-2.0 — 见 [LICENSE](LICENSE)。
+Apache-2.0 — 见 [LICENSE](LICENSE)。版权所有 © 2026 Davey Wong — 见 [NOTICE](NOTICE)。
 
 **作者：** Davey Wong <wgwcko@gmail.com> · [www.guangweiblog.com](https://www.guangweiblog.com)

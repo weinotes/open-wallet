@@ -74,6 +74,6 @@ See `TECH_DESIGN.md` for the full technical design and security audit checklist.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE). Copyright © 2026 Davey Wong — see [NOTICE](NOTICE).
 
 **Author:** Davey Wong <wgwcko@gmail.com> · [www.guangweiblog.com](https://www.guangweiblog.com)
