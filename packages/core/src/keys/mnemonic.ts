@@ -27,9 +27,17 @@ export function isValidMnemonic(mnemonic: string): boolean {
   return validateMnemonic(mnemonic.trim());
 }
 
-/** Derive a seed from mnemonic + optional passphrase */
+/**
+ * Derive a seed from mnemonic + optional passphrase.
+ *
+ * NOTE: the bip39 library prepends the BIP39 salt prefix "mnemonic" to the
+ * passphrase internally — passing `mnemonic${passphrase}` here would double
+ * the prefix (salt becomes "mnemonicmnemonic...") and produce seeds that no
+ * other BIP39 wallet can reproduce. Verified against official vectors in
+ * mnemonic.test.ts.
+ */
 export function mnemonicToSeed(mnemonic: string, passphrase = ''): Uint8Array {
-  return mnemonicToSeedSync(mnemonic.trim(), `mnemonic${passphrase}`);
+  return mnemonicToSeedSync(mnemonic.trim(), passphrase);
 }
 
 /**
@@ -110,32 +118,43 @@ export function deriveSolanaPrivateKey(
 ): Uint8Array {
   const seed = mnemonicToSeed(mnemonic);
   try {
-    let node = slip0010Ed25519Master(seed);
-
-    const segments = path
-      .split('/')
-      .filter(s => s !== 'm' && s !== '')
-      .map(seg => {
-        const hardened = seg.endsWith("'");
-        const idx = parseInt(seg.replace(/'$/, ''), 10);
-        if (Number.isNaN(idx)) throw new Error(`Invalid path segment: ${seg}`);
-        return { idx, hardened };
-      });
-
-    // ed25519 requires ALL-hardened per SLIP-0010
-    for (const { idx, hardened } of segments) {
-      if (!hardened) {
-        throw new Error(
-          `ed25519 (SLIP-0010) only supports hardened derivation — path must use ' suffix. Got idx=${idx}`,
-        );
-      }
-      node = slip0010Ed25519Hardened(node.privateKey, node.chainCode, idx);
-    }
-
-    return node.privateKey;
+    return deriveSlip0010Ed25519FromSeed(seed, path);
   } finally {
     wipeBytes(seed);
   }
+}
+
+/**
+ * SLIP-0010 ed25519 derivation from a raw seed — exported for official
+ * test-vector verification (see mnemonic.test.ts).
+ */
+export function deriveSlip0010Ed25519FromSeed(
+  seed: Uint8Array,
+  path: string,
+): Uint8Array {
+  let node = slip0010Ed25519Master(seed);
+
+  const segments = path
+    .split('/')
+    .filter(s => s !== 'm' && s !== '')
+    .map(seg => {
+      const hardened = seg.endsWith("'");
+      const idx = parseInt(seg.replace(/'$/, ''), 10);
+      if (Number.isNaN(idx)) throw new Error(`Invalid path segment: ${seg}`);
+      return { idx, hardened };
+    });
+
+  // ed25519 requires ALL-hardened per SLIP-0010
+  for (const { idx, hardened } of segments) {
+    if (!hardened) {
+      throw new Error(
+        `ed25519 (SLIP-0010) only supports hardened derivation — path must use ' suffix. Got idx=${idx}`,
+      );
+    }
+    node = slip0010Ed25519Hardened(node.privateKey, node.chainCode, idx);
+  }
+
+  return node.privateKey;
 }
 
 /** Convert a raw 32-byte private key to a hex string (with 0x prefix) */
