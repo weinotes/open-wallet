@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  commit-lint:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check last 10 commits
+        run: |
+          set -e
+          git log -10 --pretty=%s | grep -E '^(feat|fix|docs|refactor|chore|test|build|ci|perf|style|revert)(\(.+\))?: ' \
+            || { echo '❌ Commit message not in Conventional Commits format'; exit 1; }
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan pushed diff
+        run: |
+          git diff HEAD~5..HEAD -- . ':!node_modules' ':!pnpm-lock.yaml' | \
+            grep -nE '(sk-[A-Za-z0-9]{16,}|0x[0-9a-fA-F]{64}|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|api[_-]?key[[:space:]]*=[[:space:]]*["'"'"'][^"'"'"']{8,})' \
+            && { echo '❌ Potential secret in diff'; exit 1; } || echo '✅ No secrets in diff'
+      - name: Scan working tree
+        run: |
+          grep -rnE '(BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|sk-[A-Za-z0-9]{16,})' --include='*' . \
+            --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+            && { echo '❌ Secret-like content found'; exit 1; } || echo '✅ Tree clean'
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # --passWithNoTests: suite not written yet (vitest skeleton in place)
+      - run: pnpm exec vitest run --passWithNoTests
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
