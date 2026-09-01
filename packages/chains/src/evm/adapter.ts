@@ -446,11 +446,17 @@ export class EvmAdapter implements ChainAdapter {
   }
 
   async getTransactionStatus(txHash: string): Promise<TransactionRecord['status']> {
-    const receipt = await this.publicClient.getTransactionReceipt({
-      hash: txHash as Hex,
-    });
-    if (!receipt) return 'pending';
-    return receipt.status === 'success' ? 'confirmed' : 'failed';
+    try {
+      const receipt = await this.publicClient.getTransactionReceipt({
+        hash: txHash as Hex,
+      });
+      if (!receipt) return 'pending';
+      return receipt.status === 'success' ? 'confirmed' : 'failed';
+    } catch {
+      // viem throws when the receipt is not found yet (tx still pending
+      // in the mempool) — treat as pending, don't crash the polling loop.
+      return 'pending';
+    }
   }
 
   // ─── Fees ──────────────────────────────────────────────────────────
