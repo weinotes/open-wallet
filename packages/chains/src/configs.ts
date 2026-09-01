@@ -47,10 +47,10 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
     nativeSymbol: 'tBNB',
     nativeDecimals: 18,
     rpcs: [
+      'https://bsc-testnet.publicnode.com',
       'https://data-seed-prebsc-2-s1.binance.org:8545',
       'https://data-seed-prebsc-1-s2.binance.org:8545',
       'https://data-seed-prebsc-2-s2.binance.org:8545',
-      'https://bsc-testnet.publicnode.com',
     ],
     explorer: 'https://testnet.bscscan.com',
     bip44Path: "m/44'/714'/0'/0",
