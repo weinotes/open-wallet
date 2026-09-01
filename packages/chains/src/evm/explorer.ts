@@ -32,6 +32,13 @@ interface ExplorerApiEndpoint {
 function resolveExplorerApi(publicUrl: string): ExplorerApiEndpoint {
   const lower = publicUrl.toLowerCase();
 
+  // ⚠️ ORDER MATTERS: 'optimistic.etherscan' must be checked BEFORE the
+  // generic 'etherscan' rule — 'optimistic.etherscan.io' also contains
+  // 'etherscan', so the generic rule would win and Optimism history would
+  // silently query api.etherscan.io (Ethereum mainnet data).
+  if (lower.includes('optimistic.etherscan')) {
+    return { label: 'Optimistic', apiBase: 'https://api-optimistic.etherscan.io' };
+  }
   // Known explorers with a fixed /api path
   if (lower.includes('etherscan')) {
     return { label: 'Etherscan', apiBase: `https://api${lower.includes('testnet') ? '-testnet' : ''}.etherscan.io` };
@@ -44,9 +51,6 @@ function resolveExplorerApi(publicUrl: string): ExplorerApiEndpoint {
   }
   if (lower.includes('arbiscan')) {
     return { label: 'Arbiscan', apiBase: 'https://api.arbiscan.io' };
-  }
-  if (lower.includes('optimistic.etherscan')) {
-    return { label: 'Optimistic', apiBase: 'https://api-optimistic.etherscan.io' };
   }
   if (lower.includes('basescan')) {
     return { label: 'BaseScan', apiBase: 'https://api.basescan.org' };
@@ -109,12 +113,22 @@ interface ExplorerTokenBalance {
 export interface ExplorerClientOptions {
   /** Public explorer URL, e.g. "https://bscscan.com" */
   explorerUrl: string;
+  /** Decimal chain ID (e.g. 56 for BSC) — enables Etherscan API V2 (multi-chain) */
+  chainIdDecimal?: number;
   /** Optional API key (major explorers limit unauthenticated calls to ~5/sec) */
   apiKey?: string;
   /** Max requests per second; default 4 (safe for free tier) */
   rateLimitRps?: number;
   /** Request timeout in ms; default 15000 */
   timeoutMs?: number;
+}
+
+/** Raised when the Etherscan V2 plan does not cover the requested chain. */
+class ExplorerCoverageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExplorerCoverageError';
+  }
 }
 
 /** Thin queue to rate-limit concurrent explorer calls */
@@ -142,12 +156,21 @@ export class ExplorerClient {
   private readonly apiKey?: string;
   private readonly limiter: RateLimiter;
   private readonly timeoutMs: number;
+  /** Decimal chain id for Etherscan API V2 — undefined disables V2 */
+  private readonly chainIdDecimal?: number;
+  /** Whether V2 is still worth trying (flips false on plan-coverage errors) */
+  private v2Available: boolean;
+  /** Legacy V1 api base (per-explorer), used as V2 fallback */
+  private readonly v1Base: string;
 
   constructor(opts: ExplorerClientOptions) {
     this.endpoint = resolveExplorerApi(opts.explorerUrl);
     this.apiKey = opts.apiKey;
     this.limiter = new RateLimiter(opts.rateLimitRps ?? 4);
     this.timeoutMs = opts.timeoutMs ?? 15_000;
+    this.chainIdDecimal = opts.chainIdDecimal;
+    this.v2Available = opts.chainIdDecimal !== undefined;
+    this.v1Base = this.endpoint.apiBase;
   }
 
   /** Derive explorer page URL for a given tx hash */
@@ -181,7 +204,28 @@ export class ExplorerClient {
   ): Promise<ExplorerBaseResponse & { result: unknown }> {
     await this.limiter.wait();
 
-    const url = new URL(this.endpoint.apiBase);
+    if (this.v2Available) {
+      try {
+        return await this.callV2(params);
+      } catch (err) {
+        // Plan does not cover this chain (free tier covers only a few
+        // mainnets) — permanently fall back to the legacy V1 endpoint.
+        if (err instanceof ExplorerCoverageError) {
+          this.v2Available = false;
+          return this.callV1(params);
+        }
+        throw err;
+      }
+    }
+    return this.callV1(params);
+  }
+
+  /** Etherscan API V2 — one endpoint for every chain, keyed by chainid */
+  private async callV2(
+    params: Record<string, string | number>,
+  ): Promise<ExplorerBaseResponse & { result: unknown }> {
+    const url = new URL('https://api.etherscan.io/v2/api');
+    url.searchParams.set('chainid', String(this.chainIdDecimal));
     url.searchParams.set('module', String(params.module));
     url.searchParams.set('action', String(params.action));
     for (const [k, v] of Object.entries(params)) {
@@ -193,6 +237,45 @@ export class ExplorerClient {
       url.searchParams.set('apikey', this.apiKey);
     }
 
+    const resp = await this.fetchJson(url);
+
+    // Plan-coverage failures mean "this chain is not on our V2 tier" —
+    // signal the caller to fall back to V1, not a hard error.
+    if (
+      resp.status === '0' &&
+      /free api access is not supported|missing\/invalid api key/i.test(
+        String(resp.result ?? resp.message),
+      )
+    ) {
+      throw new ExplorerCoverageError(
+        `[Etherscan V2] ${String(resp.result ?? resp.message)}`,
+      );
+    }
+
+    return resp;
+  }
+
+  /** Legacy V1 — per-explorer endpoint (module=account&action=...) */
+  private async callV1(
+    params: Record<string, string | number>,
+  ): Promise<ExplorerBaseResponse & { result: unknown }> {
+    const url = new URL(this.v1Base);
+    url.searchParams.set('module', String(params.module));
+    url.searchParams.set('action', String(params.action));
+    for (const [k, v] of Object.entries(params)) {
+      if (k !== 'module' && k !== 'action') {
+        url.searchParams.set(k, String(v));
+      }
+    }
+    if (this.apiKey) {
+      url.searchParams.set('apikey', this.apiKey);
+    }
+    return this.fetchJson(url);
+  }
+
+  private async fetchJson(
+    url: URL,
+  ): Promise<ExplorerBaseResponse & { result: unknown }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -201,8 +284,7 @@ export class ExplorerClient {
       if (!res.ok) {
         throw new Error(`Explorer HTTP ${res.status}: ${this.endpoint.label}`);
       }
-      const json = (await res.json()) as ExplorerBaseResponse & { result: unknown };
-      return json;
+      return (await res.json()) as ExplorerBaseResponse & { result: unknown };
     } finally {
       clearTimeout(timer);
     }
@@ -374,3 +456,6 @@ export class ExplorerClient {
     };
   }
 }
+
+/** Exported for unit tests */
+export { resolveExplorerApi };

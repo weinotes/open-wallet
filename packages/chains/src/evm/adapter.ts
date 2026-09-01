@@ -127,6 +127,7 @@ export class EvmAdapter implements ChainAdapter {
     if (!this.explorerClient) {
       this.explorerClient = new ExplorerClient({
         explorerUrl: this.config.explorer,
+        chainIdDecimal: this.config.chainIdDecimal,
         apiKey: EXPLORER_API_KEY,
       });
     }
@@ -393,48 +394,13 @@ export class EvmAdapter implements ChainAdapter {
     tx: ExplorerNativeTx | ExplorerTokenTx,
     address: string,
   ): TransactionRecord {
-    const lowerAddr = address.toLowerCase();
-    const from = tx.from.toLowerCase();
-    const to = tx.to.toLowerCase();
-
-    const record: TransactionRecord = {
-      hash: tx.hash,
-      from: tx.from,
-      to: tx.to,
-      value: tx.value,
-      blockNumber: Number(tx.blockNumber),
-      blockTimestamp: Number(tx.timeStamp),
-      status: this.resolveStatus(tx),
-      direction: from === lowerAddr ? 'sent' : 'received',
-      fee: tx.gasPrice && tx.gas
-        ? (BigInt(tx.gasPrice) * BigInt(tx.gas)).toString()
-        : undefined,
-    };
-
-    // ERC20 token tx fields
-    const tokenTx = tx as ExplorerTokenTx;
-    if (tokenTx.tokenSymbol && tokenTx.contractAddress) {
-      record.tokenSymbol = tokenTx.tokenSymbol;
-      record.tokenAddress = tokenTx.contractAddress;
-      if (tokenTx.tokenDecimal) {
-        record.tokenDecimals = Number(tokenTx.tokenDecimal);
-      }
-    }
-
-    return record;
+    return toTransactionRecord(tx, address);
   }
 
   private resolveStatus(
     tx: ExplorerNativeTx,
   ): TransactionRecord['status'] {
-    if (tx.isError === '1') return 'failed';
-    if (tx.txreceipt_status === '0') return 'failed';
-    if (tx.txreceipt_status === '1') return 'confirmed';
-    // Still pending (no receipt yet)
-    if (!tx.txreceipt_status || tx.txreceipt_status === '') {
-      return 'pending';
-    }
-    return 'confirmed';
+    return resolveStatus(tx);
   }
 
   /**
@@ -583,6 +549,66 @@ export class EvmAdapter implements ChainAdapter {
   formatTokenAmount(raw: string, decimals: number): string {
     return formatUnits(BigInt(raw), decimals);
   }
+}
+
+// ─── Pure helpers (exported for unit tests) ─────────────────────────
+
+/** Resolve an explorer tx's lifecycle status (confirmed/failed/pending) */
+export function resolveStatus(
+  tx: ExplorerNativeTx,
+): TransactionRecord['status'] {
+  if (tx.isError === '1') return 'failed';
+  if (tx.txreceipt_status === '0') return 'failed';
+  if (tx.txreceipt_status === '1') return 'confirmed';
+  // Still pending (no receipt yet)
+  if (!tx.txreceipt_status || tx.txreceipt_status === '') {
+    return 'pending';
+  }
+  return 'confirmed';
+}
+
+/**
+ * Convert an explorer-native tx (or token tx) into our unified type.
+ *
+ * Direction rules (money-safety relevant):
+ *   - from === address        → 'sent'     (we paid)
+ *   - to === address          → 'received' (we got paid)
+ * ERC20 token decimals MUST be propagated so the UI renders correct amounts
+ * (USDT/USDC are 6 decimals, not 18 — assuming 18 shows amounts off by 10^12).
+ */
+export function toTransactionRecord(
+  tx: ExplorerNativeTx | ExplorerTokenTx,
+  address: string,
+): TransactionRecord {
+  const lowerAddr = address.toLowerCase();
+  const from = tx.from.toLowerCase();
+  const to = tx.to.toLowerCase();
+
+  const record: TransactionRecord = {
+    hash: tx.hash,
+    from: tx.from,
+    to: tx.to,
+    value: tx.value,
+    blockNumber: Number(tx.blockNumber),
+    blockTimestamp: Number(tx.timeStamp),
+    status: resolveStatus(tx),
+    direction: from === lowerAddr ? 'sent' : 'received',
+    fee: tx.gasPrice && tx.gas
+      ? (BigInt(tx.gasPrice) * BigInt(tx.gas)).toString()
+      : undefined,
+  };
+
+  // ERC20 token tx fields
+  const tokenTx = tx as ExplorerTokenTx;
+  if (tokenTx.tokenSymbol && tokenTx.contractAddress) {
+    record.tokenSymbol = tokenTx.tokenSymbol;
+    record.tokenAddress = tokenTx.contractAddress;
+    if (tokenTx.tokenDecimal) {
+      record.tokenDecimals = Number(tokenTx.tokenDecimal);
+    }
+  }
+
+  return record;
 }
 
 export { toEip55Address, validateEip55Address } from './utils.js';
