@@ -6,6 +6,12 @@
  *   (default)       Read PRIVATE_KEY env, send a self-transfer of 0.0001 tBNB
  *                   via the real EvmAdapter (build → sign → broadcast → poll).
  *
+ * Optional env:
+ *   GAS_PRICE_MULTIPLIER   Multiply the estimated gas price (default 1).
+ *                          BSC testnet validators IGNORE floor-price txs
+ *                          (~0.1 gwei, what the RPC suggests) — they sit in
+ *                          the mempool forever. Use 20 (~2 gwei) for testnet.
+ *
  * Usage:
  *   # Step 1 — generate a test address
  *   MODE=generate pnpm tsx scripts/evm-test.ts
@@ -14,7 +20,7 @@
  *   #           claim ~0.1 tBNB, wait ~1 min.
  *
  *   # Step 3 — run the send test
- *   PRIVATE_KEY=0xabc... pnpm tsx scripts/evm-test.ts
+ *   PRIVATE_KEY=0xabc... GAS_PRICE_MULTIPLIER=20 pnpm tsx scripts/evm-test.ts
  */
 
 import { randomBytes } from 'node:crypto';
@@ -147,6 +153,23 @@ async function runSendMode() {
   console.log('   gasLimit     :', rawTx.gasLimit);
   console.log('   maxFeePerGas :', rawTx.maxFeePerGas);
   console.log('   chainId      :', rawTx.chainId);
+
+  // ── Step 2.5: Optional gas price multiplier ──────────────────────
+  // BSC testnet validators ignore floor-price txs; bump the fee so the
+  // broadcast tx actually gets mined (see header docs).
+  const multiplier = Number(process.env.GAS_PRICE_MULTIPLIER || '1');
+  if (multiplier > 1) {
+    if (rawTx.maxFeePerGas) {
+      rawTx.maxFeePerGas = (BigInt(rawTx.maxFeePerGas) * BigInt(Math.round(multiplier * 100)) / 100n).toString();
+      if (rawTx.maxPriorityFeePerGas) {
+        rawTx.maxPriorityFeePerGas = (BigInt(rawTx.maxPriorityFeePerGas) * BigInt(Math.round(multiplier * 100)) / 100n).toString();
+      }
+    }
+    if (rawTx.gasPrice) {
+      rawTx.gasPrice = (BigInt(rawTx.gasPrice) * BigInt(Math.round(multiplier * 100)) / 100n).toString();
+    }
+    console.log(`   (gas price × ${multiplier} → maxFeePerGas: ${rawTx.maxFeePerGas ?? rawTx.gasPrice})`);
+  }
 
   // ── Step 3: Sign ──────────────────────────────────────────────────
   console.log('\n[3/5] Signing with transient private key...');
